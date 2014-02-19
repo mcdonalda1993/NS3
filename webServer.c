@@ -38,15 +38,15 @@
 #endif
 
 #ifndef RESPONSE_400
-#define RESPONSE_400 "Connection: close \r\n"
+#define RESPONSE_400 "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\"><html>\r\n<head>\r\n<title> 400 Bad Request </title>\r\n</head>\r\n<body>\r\n<p> 400 Bad Request </p>\r\n</body>\r\n</html>\r\n"
 #endif
 
 #ifndef RESPONSE_404
-#define RESPONSE_404 "Connection: close \r\n"
+#define RESPONSE_404 "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\"><html>\r\n<head>\r\n<title> 404 Not Found </title>\r\n</head>\r\n<body>\r\n<p> 404 Not Found </p>\r\n</body>\r\n</html>\r\n"
 #endif
 
 #ifndef RESPONSE_500
-#define RESPONSE_500 "Connection: close \r\n"
+#define RESPONSE_500 "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\"><html>\r\n<head>\r\n<title> 500 Internal Server Error </title>\r\n</head>\r\n<body>\r\n<p> 500 Internal Server Error </p>\r\n</body>\r\n</html>\r\n"
 #endif
 
 // void sigproc(void);
@@ -325,7 +325,7 @@ int check_Hostname(int fd, char ** httpRequest){
 		
 		// Conversion to lower case.
 		// Taken from stack overflow: J.F. Sebastian
-		// https://stackoverflow.com/questions/2661766/c-convert-a-mixed-case-string-to-all-lower-case
+		// https://stackoverflow.com/a/2661788
 		for ( ; *p; ++p) *p = tolower(*p);
 		
 		found = strncmp( copy, "host: ", 6);
