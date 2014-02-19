@@ -70,12 +70,8 @@ void respond_500(int fd);
 // int fd;
 
 /* Things to ask about in the labs */
-/* What does in6addr_any mean? */
 /* Am I allowed to fprintf any errors? */
-/* Is this printf of server running ok? */
-/* Should I close the program when I error or just continue the loop? */
-/* What is the difference between close and fclose and which should I use? */
-/* Is it ok that I generate the content length regardless of if the connection is closing */
+/* Is the printf of "Server running" ok leave in? */
 /* Is localhost a valid domain name? */
 
 /* There is an issue where, every so often, the browser will seem to send the request
@@ -85,6 +81,8 @@ void respond_500(int fd);
    remedy the situation is to resend the request. That usually works. I should also point out that
    this issue had surfaced in the single threaded version. Unknown if it occurs in the multi-threaded
    version */
+ /* Try:  https://ngrok.com/
+    to debug later */
 
 /* Need to:
 -Multithreading */
@@ -95,8 +93,7 @@ int main(){
 	int fd;
 	int type = AF_INET6;
 	
-	// SOCK STREAM parameter indicates that a TCP stream socket is desired;
-	// use SOCK DGRAM to create a UDP datagram socket
+	/* SOCK STREAM parameter indicates that a TCP stream socket is desired. Use SOCK DGRAM instead to create a UDP datagram socket */
 	fd = socket(type, SOCK_STREAM, 0);
 	if (fd == -1) {
 		// an error occurred
