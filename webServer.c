@@ -325,6 +325,7 @@ int check_Hostname(int fd, char ** httpRequest){
 		
 		// Conversion to lower case.
 		// Taken from stack overflow: J.F. Sebastian
+		// https://stackoverflow.com/questions/2661766/c-convert-a-mixed-case-string-to-all-lower-case
 		for ( ; *p; ++p) *p = tolower(*p);
 		
 		found = strncmp( copy, "host: ", 6);
