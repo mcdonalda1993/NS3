@@ -74,8 +74,6 @@ void respond_500(int fd);
 /* Am I allowed to fprintf any errors? */
 /* Is this printf of server running ok? */
 /* Should I close the program when I error or just continue the loop? */
-/* If you interrupt the program or it errors, it won't release the port 
-	straight away. Any idea how to fix that? */
 /* What is the difference between close and fclose and which should I use? */
 /* Is it ok that I generate the content length regardless of if the connection is closing */
 /* Is localhost a valid domain name? */
@@ -105,6 +103,11 @@ int main(){
 		fprintf(stderr, "Socket failed to be made\n");
 		return -1;
 	}
+	
+	/* Means that if the server crashes you don't have to wait ages
+	   to be able to rebind the socket */
+	int set=1;
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &set, sizeof(set));
 	
 	/* Bind the socket to a port */
 	struct sockaddr_in6 addr;
