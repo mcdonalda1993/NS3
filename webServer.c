@@ -6,6 +6,7 @@
 #include <netdb.h>
 #include <signal.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #ifndef PORT
 #define PORT 8008
@@ -20,6 +21,11 @@
 // FULL_MESSAGE_BUFFER is the max size of message the server can receive
 #ifndef FULL_MESSAGE_BUFFER
 #define FULL_MESSAGE_BUFFER 16*1024
+#endif
+
+// MAX_HOSTNAME is the max size the hostname can be
+#ifndef MAX_HOSTNAME
+#define MAX_HOSTNAME 2*1024
 #endif
 
 // RESOURCE_NAME_BUFFER is the max size of resource name the server can be requested
@@ -46,6 +52,8 @@
 // void sigproc(void);
 /* Splits the full string of the response into an array of strings, one entry for each line */
 int split_HTTP_Request(int fd, char * httpRequest, char *delimiter, char *** lines);
+/* Looks for a hostname, then checks if it matches current hostname */
+int check_Hostname(int fd, char ** httpRequest);
 /* Checks the validity of the request before returning the requested resources name */
 int check_Resource(int fd, char * httpRequest, char ** addr);
 /* Attempts to read in the requested resource */
@@ -70,9 +78,17 @@ void respond_500(int fd);
 	straight away. Any idea how to fix that? */
 /* What is the difference between close and fclose and which should I use? */
 /* Is it ok that I generate the content length regardless of if the connection is closing */
+/* Is localhost a valid domain name? */
+
+/* There is an issue where, every so often, the browser will seem to send the request
+   however will just sit loading constantly. I have tried tracing the problem but can only
+   determine that it must be some error with accepting the request because although the browser
+   appears to have sent one, my program does not appear to receive it. All the use has to do to
+   remedy the situation is to resend the request. That usually works. I should also point out that
+   this issue had surfaced in the single threaded version. Unknown if it occurs in the multi-threaded
+   version */
 
 /* Need to:
--Get it to check hostname
 -Multithreading */
 
 int main(){
@@ -108,6 +124,7 @@ int main(){
 	if (listen(fd, BACKLOG) == -1) {
 		// an error occurred
 		fprintf(stderr, "Failed listen\n");
+		return -1;
 	}
 	printf("Server Running.\n");
 
@@ -165,6 +182,14 @@ int main(){
 			continue;
 		}
 		
+		/* Check the hostname field of the request is valid */
+		error_Check = 0;
+		error_Check = check_Hostname(connfd, lines);
+		if(error_Check<0){
+			fprintf(stderr, "Error invalid hostname detected\n");
+			continue;
+		}
+		
 		/* Get the name of the resource requested */
 		char * filename;
 		error_Check = 0;
@@ -217,9 +242,6 @@ int main(){
 
 /* This function will split a request into based on the assumption the terminator symbol is the delimiter twice.*/
 int split_HTTP_Request(int fd, char * http_Request, char *delimiter, char ***  lines){
-	static int times_Ran = 0;
-	times_Ran++;
-	printf("%i\n", times_Ran);
 	char * cursor = http_Request;
 	int num_Of_Lines = 0;
 	int length_Of_Request = strlen(http_Request);
@@ -233,7 +255,6 @@ int split_HTTP_Request(int fd, char * http_Request, char *delimiter, char ***  l
 		return -1;
 	}
 	
-	// printf("Before loop\n");
 	while(strncmp(cursor, delimiter, length_Of_Delimiter) || 
 	      strncmp((cursor+length_Of_Delimiter), delimiter, length_Of_Delimiter) ){
 		if( !strncmp(cursor, delimiter, length_Of_Delimiter) ){
@@ -246,10 +267,8 @@ int split_HTTP_Request(int fd, char * http_Request, char *delimiter, char ***  l
 			respond_500(fd);
 			return -1;
 		}
-		// printf("Loops - length: %li\n", ((cursor-http_Request) - length_Of_Request));
 		cursor++;
 	}
-	// printf("After loop\n");
 
 	// This was too presumptuous of good data always coming from a HTTP request (Looking at you Chrome)
 	// if(length_Of_Request-(cursor-http_Request) != (length_Of_Delimiter*2)){
@@ -284,6 +303,118 @@ int split_HTTP_Request(int fd, char * http_Request, char *delimiter, char ***  l
 	}
 	
 	return num_Of_Lines;
+}
+
+/* Looks for a hostname, then checks if it matches current hostname */
+int check_Hostname(int fd, char ** httpRequest){
+	char ** currentLine;
+	int found = 1;
+	int error_Check = 0;
+	
+	/* Find if the host name has been given in the request */
+	for(currentLine = httpRequest; *currentLine && found; currentLine++){
+		
+		/* Convert line to lowercase */
+		// Make a copy of the current line to preserve the message from being altered
+		char * copy = malloc(strlen(*currentLine));
+		strcpy ( copy, *currentLine );
+		char * p = copy;
+		
+		// Conversion to lower case.
+		// Taken from stack overflow: J.F. Sebastian
+		for ( ; *p; ++p) *p = tolower(*p);
+		
+		found = strncmp( copy, "host: ", 6);
+		free(copy);
+	}
+	// If hostname not given, request is OK
+	if(found){
+		return 0;
+	}
+	// Points back one line to the correct line
+	currentLine--;
+	
+	/* Get the current servers hostname */
+	// Allocates space for hostname
+	char * hostname = malloc(MAX_HOSTNAME+5);
+	if(hostname==NULL){
+		fprintf(stderr, "Error allocating space for hostname\n");
+		respond_500(fd);
+		return -1;
+	}
+	// Gets the hostname
+	error_Check = 0;
+	error_Check = gethostname(hostname, MAX_HOSTNAME);
+	if(error_Check<0){
+		fprintf(stderr, "Error getting hostname\n");
+		free(hostname);
+		respond_500(fd);
+		return -1;
+	}
+	
+	// This is used in the conversion of integer to string. It requires a string to fill.
+	char * sPort = malloc(7);
+	if(sPort==NULL){
+		fprintf(stderr, "Error allocating space for sPort\n");
+		free(hostname);
+		respond_500(fd);
+		return -1;
+	}
+	
+	
+	/* Compare the current hostname with the requested hostname */
+	if(!strncmp(*currentLine+6, hostname, MAX_HOSTNAME)){
+		free(hostname);
+		free(sPort);
+		return 0;
+	}
+	
+	/* Check if the hostname has specified a non standard port */
+	error_Check = 0;
+	// Creates a string of the port number to concatenate
+	error_Check = snprintf(sPort, 6, ":%i", PORT);
+	if(error_Check<0){
+		fprintf(stderr, "Error invalid port for server\n");
+		free(hostname);
+		free(sPort);
+		respond_500(fd);
+		return -1;
+	}
+	// Add port number to the end of the hostname string
+	strcat(hostname, sPort);
+	if(!strncmp(*currentLine+6, hostname, MAX_HOSTNAME)){
+		free(hostname);
+		free(sPort);
+		return 0;
+	}
+	free(hostname);
+	
+	/* Check if it is a localhost domain */
+	char * local = malloc(strlen("localhost") + 5);
+	if(local==NULL){
+		fprintf(stderr, "Error allocating space for local\n");
+		free(sPort);
+		respond_500(fd);
+		return -1;
+	}
+	strcpy(local, "localhost");
+	if (!strncmp(*currentLine+6, local, MAX_HOSTNAME)){
+		free(local);
+		free(sPort);
+		return 0;
+	}
+	
+	/* Check if it is a localhost with a non standard port */
+	strcat(local, sPort);
+	if (!strncmp(*currentLine+6, local, MAX_HOSTNAME)){
+		free(local);
+		free(sPort);
+		return 0;
+	}
+	free(local);
+	free(sPort);
+	respond_400(fd);
+	return -1;
 }
 
 /* Checks the validity of the request before returning the requested resources name */
@@ -410,6 +541,7 @@ int respond_200(int fd, int size, char * extension, char * content){
 	error_Check = sprintf(content_Length, "Content-Length: %i\r\n\r\n", size);
 	if(error_Check<0){
 		fprintf(stderr, "Error at sprintf\n");
+		free(content_Length);
 		respond_500(fd);
 		return -1;
 	}
@@ -441,6 +573,7 @@ int respond_200(int fd, int size, char * extension, char * content){
 	// Malloc check
 	if(response==NULL){
 		fprintf(stderr, "Error allocating space for full response. Requested content probably too big\n");
+		free(content_Length);
 		respond_500(fd);
 		return -1;
 	}
@@ -462,12 +595,12 @@ int respond_200(int fd, int size, char * extension, char * content){
 	free(content_Length);
 	
 	// Check if the message sent fine
-	if (error_Check == -1) {
+	if (error_Check<0) {
 		// An error has occurred
 		fprintf(stderr, "Full response to client: \n");
 		fprintf(stderr, "%s\n", response);
-		free(response);
 		fprintf(stderr, "Error writing response: 200\n");
+		free(response);
 		respond_500(fd);
 		return -1;
 	}
