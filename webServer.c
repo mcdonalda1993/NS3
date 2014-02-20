@@ -329,7 +329,7 @@ int check_Hostname(int fd, char ** httpRequest){
 		free(copy);
 	}
 	// If hostname not given, request is OK
-	if(found){
+	if(!found){
 		return 0;
 	}
 	// Points back one line to the correct line
@@ -438,6 +438,7 @@ int check_Resource(int fd, char * httpRequest, char ** addr){
 		respond_500(fd);
 		return -1;
 	}
+	
 	num = sscanf(httpRequest, "%3s /%s %8s", request, resource, protocol);
 	
 	free(protocol);
