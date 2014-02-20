@@ -308,11 +308,11 @@ int split_HTTP_Request(int fd, char * http_Request, char *delimiter, char ***  l
 /* Looks for a hostname, then checks if it matches current hostname */
 int check_Hostname(int fd, char ** httpRequest){
 	char ** currentLine;
-	int found = 1;
+	int found = 0;
 	int error_Check = 0;
 	
 	/* Find if the host name has been given in the request */
-	for(currentLine = httpRequest; *currentLine && found; currentLine++){
+	for(currentLine = httpRequest; *currentLine && !found; currentLine++){
 		
 		/* Convert line to lowercase */
 		// Make a copy of the current line to preserve the message from being altered
@@ -325,7 +325,7 @@ int check_Hostname(int fd, char ** httpRequest){
 		// https://stackoverflow.com/a/2661788
 		for ( ; *p; ++p) *p = tolower(*p);
 		
-		found = strncmp( copy, "host: ", 6);
+		found = ! (strncmp( copy, "host: ", 6));
 		free(copy);
 	}
 	// If hostname not given, request is OK
@@ -337,7 +337,7 @@ int check_Hostname(int fd, char ** httpRequest){
 	
 	/* Get the current servers hostname */
 	// Allocates space for hostname
-	char * hostname = malloc(MAX_HOSTNAME+5);
+	char * hostname = malloc(MAX_HOSTNAME+6);
 	if(hostname==NULL){
 		fprintf(stderr, "Error allocating space for hostname\n");
 		respond_500(fd);
@@ -353,6 +353,13 @@ int check_Hostname(int fd, char ** httpRequest){
 		return -1;
 	}
 	
+	/* Convert hostname to all lowercase */
+	char * p = hostname;	
+	// Conversion to lower case.
+	// Taken from stack overflow: J.F. Sebastian
+	// https://stackoverflow.com/a/2661788
+	for ( ; *p; ++p) *p = tolower(*p);
+	
 	// This is used in the conversion of integer to string. It requires a string to fill.
 	char * sPort = malloc(7);
 	if(sPort==NULL){
@@ -361,7 +368,6 @@ int check_Hostname(int fd, char ** httpRequest){
 		respond_500(fd);
 		return -1;
 	}
-	
 	
 	/* Compare the current hostname with the requested hostname */
 	if(!strncmp(*currentLine+6, hostname, MAX_HOSTNAME)){
@@ -388,7 +394,6 @@ int check_Hostname(int fd, char ** httpRequest){
 		free(sPort);
 		return 0;
 	}
-	free(hostname);
 	
 	/* Check if it is a localhost domain */
 	char * local = malloc(strlen("localhost") + 5);
@@ -412,6 +417,9 @@ int check_Hostname(int fd, char ** httpRequest){
 		free(sPort);
 		return 0;
 	}
+	
+	fprintf(stderr, "Error %s does not match hostname given: %s\n", hostname, *currentLine+6);
+	free(hostname);
 	free(local);
 	free(sPort);
 	respond_400(fd);
@@ -430,7 +438,7 @@ int check_Resource(int fd, char * httpRequest, char ** addr){
 		respond_500(fd);
 		return -1;
 	}
-	num = sscanf(httpRequest, "%s /%s %s", request, resource, protocol);
+	num = sscanf(httpRequest, "%3s /%s %8s", request, resource, protocol);
 	
 	free(protocol);
 	// If num is less than 3, an error has occurred
