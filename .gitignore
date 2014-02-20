@@ -2,3 +2,4 @@
 *.sublime*
 *.o
 webServer
+error.log
