@@ -130,12 +130,13 @@ int main(){
 
 	// signal(SIGINT, sigproc);
 
+	int connfd;
+	
 	while(1){
 		
 		int error_Check = 0;
 		
 		/* Accept a connection	*/
-		int connfd;
 		struct sockaddr_in6 cliaddr;	
 		socklen_t cliaddr_len = sizeof(cliaddr);
 		
@@ -150,6 +151,8 @@ int main(){
 			fprintf(stderr, "Connection closed by client\n");
 			close(connfd);
 			continue;
+		}else{
+			fprintf(stderr, "Connection accepted: %i\n", connfd);
 		}
 		
 		/* Create buffer to read in data from connection */
@@ -170,6 +173,8 @@ int main(){
 			respond_500(connfd);
 			// return -1;
 			continue;
+		}else{
+			fprintf(stderr, "Message: %s\n", buf);
 		}
 		
 		/* Spilt the request into an array of each line */
@@ -396,7 +401,7 @@ int check_Hostname(int fd, char ** httpRequest){
 	}
 	
 	/* Check if it is a localhost domain */
-	char * local = malloc(strlen("localhost") + 5);
+	char * local = malloc(strlen("localhost") + strlen(sPort));
 	if(local==NULL){
 		fprintf(stderr, "Error allocating space for local\n");
 		free(sPort);
@@ -433,8 +438,22 @@ int check_Resource(int fd, char * httpRequest, char ** addr){
 	// RESOURCE_NAME_BUFFER is the max size of resource name the server can be requested
 	char * resource = malloc(RESOURCE_NAME_BUFFER);
 	char * protocol = malloc(9);
-	if(request==NULL || resource==NULL || protocol==NULL){
+	if(request==NULL){
 		fprintf(stderr, "Error allocating temporary space for splitting GET request\n");
+		free(resource);
+		free(protocol);
+		respond_500(fd);
+		return -1;
+	}else if(resource==NULL){
+		fprintf(stderr, "Error allocating temporary space for splitting resource\n");
+		free(request);
+		free(protocol);
+		respond_500(fd);
+		return -1;
+	}else if(protocol==NULL){
+		fprintf(stderr, "Error allocating temporary space for splitting protocol\n");
+		free(request);
+		free(resource);
 		respond_500(fd);
 		return -1;
 	}
@@ -443,7 +462,7 @@ int check_Resource(int fd, char * httpRequest, char ** addr){
 	
 	free(protocol);
 	// If num is less than 3, an error has occurred
-	if(num<3){
+	if(num!=3){
 		fprintf(stderr, "Error scanning request. Resource name could be too large (MAX: %i)\n", RESOURCE_NAME_BUFFER);
 		free(request);
 		free(resource);
@@ -535,7 +554,6 @@ int respond_200(int fd, int size, char * extension, char * content){
 		num=num/10;
 		count++;
 	}
-	int error_Check = 0;
 	
 	/* Length of "Content length: " is 17
 	 Count is the num of digits in size
@@ -548,6 +566,7 @@ int respond_200(int fd, int size, char * extension, char * content){
 		return -1;
 	}
 	
+	int error_Check = 0;
 	error_Check = sprintf(content_Length, "Content-Length: %i\r\n\r\n", size);
 	if(error_Check<0){
 		fprintf(stderr, "Error at sprintf\n");
