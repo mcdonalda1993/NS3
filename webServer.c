@@ -19,9 +19,9 @@
 #define BACKLOG 1500
 #endif
 
-// FULL_MESSAGE_BUFFER is the max size of message the server can receive
-#ifndef FULL_MESSAGE_BUFFER
-#define FULL_MESSAGE_BUFFER 16*1024
+// INTERMEDIATE_BUFFER is the max size of read the server can receive.
+#ifndef INTERMEDIATE_BUFFER
+#define INTERMEDIATE_BUFFER 16*1024
 #endif
 
 // MAX_HOSTNAME is the max size the hostname can be
@@ -67,23 +67,6 @@ void respond_400(int fd);
 void respond_404(int fd);
 /* Responds to the connection with a 500 Internal Server Error message */
 void respond_500(int fd);
-
-// int fd;
-
-/* Things to ask about in the labs */
-/* Am I allowed to fprintf any errors? */
-/* Is the printf of "Server running" ok leave in? */
-/* Is localhost a valid domain name? */
-
-/* There is an issue where, every so often, the browser will seem to send the request
-   however will just sit loading constantly. I have tried tracing the problem but can only
-   determine that it must be some error with accepting the request because although the browser
-   appears to have sent one, my program does not appear to receive it. All the use has to do to
-   remedy the situation is to resend the request. That usually works. I should also point out that
-   this issue had surfaced in the single threaded version. Unknown if it occurs in the multi-threaded
-   version */
- /* Try:  https://ngrok.com/
-    to debug later */
 
 /* Need to:
 -Multithreading */
@@ -157,33 +140,53 @@ int main(){
 		/* Create buffer to read in data from connection */
 		ssize_t rcount = 1;
 		while(rcount){
-			// FULL_MESSAGE_BUFFER is the max size of message the server can receive
-			char buf[FULL_MESSAGE_BUFFER];
-			// Read the request into the buffer
-			rcount = read(connfd, buf, FULL_MESSAGE_BUFFER);
+			
+			//
+			int request_Size = INTERMEDIATE_BUFFER;
+			char * message = malloc(request_Size * sizeof(char *));
+			
+			/* Read the request into the buffer until it ends with \r\n\r\n */
+			// The size of the message currently read in
+			int size_Read = 0;
+			while( size_Read<4 || strncmp((message + size_Read - 4), "\r\n\r\n", 4) ){
+				
+				// INTERMEDIATE_BUFFER is the max size of read the server can receive.
+				char buf[INTERMEDIATE_BUFFER];
+				
+				rcount = read(connfd, buf, INTERMEDIATE_BUFFER);
+				if(rcount == -1){
+					break;
+				}else if(!rcount){
+					break;
+				}else if(request_Size < size_Read+rcount){
+					request_Size *= 2;
+					message = (char *) realloc( (void*) message, request_Size * sizeof(char *) );
+				}
+				memcpy(message + size_Read, buf, rcount);
+				size_Read += rcount;
+			}
+			
 			// Error checking
 			if (rcount == -1) {
 				// An error has occurred
 				fprintf(stderr, "Error reading from connection\n");
 				respond_500(connfd);
+				free(message);
 				// return -1;
-				continue;
-			}else if (rcount == FULL_MESSAGE_BUFFER){
-				fprintf(stderr, "Error, message limit reached (MAX: %i)\n", FULL_MESSAGE_BUFFER);
-				respond_500(connfd);
-				// return -1;
-				continue;
+				break;
 			}else if(!rcount){
 				fprintf(stderr, "Connection closed\n");
-				continue;
+				free(message);
+				break;
 			}
 			
 			/* Spilt the request into an array of each line */
 			char ** lines;
 			int size_Of_Array = 0;
-			size_Of_Array = split_HTTP_Request(connfd, buf, "\r\n", &lines);
+			size_Of_Array = split_HTTP_Request(connfd, message, "\r\n", &lines);
 			if (size_Of_Array<0){
 				fprintf(stderr, "Error splitting HTTP Request\n");
+				free(message);
 				// return -1;
 				continue;
 			}
@@ -193,6 +196,7 @@ int main(){
 			error_Check = check_Hostname(connfd, lines);
 			if(error_Check<0){
 				fprintf(stderr, "Error invalid hostname detected\n");
+				free(message);
 				free(lines);
 				continue;
 			}
@@ -203,8 +207,8 @@ int main(){
 			error_Check = check_Resource(connfd, *lines, &filename);
 			if(error_Check<0){
 				fprintf(stderr, "Error at get resource\n");
+				free(message);
 				free(lines);
-				free(filename);
 				// return -1;
 				continue;
 			}
@@ -215,6 +219,7 @@ int main(){
 			size = read_In_Resource(connfd, filename, &resource_Requested);
 			if(size<0){
 				// An error has occurred
+				free(message);
 				free(lines);
 				free(filename);
 				continue;
@@ -232,6 +237,7 @@ int main(){
 			error_Check = respond_200(connfd, size, extension, resource_Requested);
 			
 			// Free allocated resources
+			free(message);
 			free(lines);
 			free(filename);
 			free(resource_Requested);
@@ -477,10 +483,10 @@ int check_Resource(int fd, char * httpRequest, char ** addr){
 	free(protocol);
 	// If num is less than 3, an error has occurred
 	if(num!=3){
-		fprintf(stderr, "Error scanning request. Resource name could be too large (MAX: %i)\n", RESOURCE_NAME_BUFFER);
+		fprintf(stderr, "Error scanning request. Either one field of first line missing or resource name could be too large (MAX: %i)\n", RESOURCE_NAME_BUFFER);
 		free(request);
 		free(resource);
-		respond_500(fd);
+		respond_400(fd);
 		return -1;
 	}
 	// If the request is not a GET, generate an error
