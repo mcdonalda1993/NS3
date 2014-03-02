@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <sys/stat.h>
 
 #ifndef PORT
 #define PORT 8008
@@ -151,84 +152,95 @@ int main(){
 			fprintf(stderr, "Connection closed by client\n");
 			close(connfd);
 			continue;
-		}else{
-			fprintf(stderr, "Connection accepted: %i\n", connfd);
 		}
 		
 		/* Create buffer to read in data from connection */
-		ssize_t rcount;
-		// FULL_MESSAGE_BUFFER is the max size of message the server can receive
-		char buf[FULL_MESSAGE_BUFFER];
-		// Read the request into the buffer
-		rcount = read(connfd, buf, FULL_MESSAGE_BUFFER);
-		// Error checking
-		if (rcount == -1) {
-			// An error has occurred
-			fprintf(stderr, "Error reading from connection\n");
-			respond_500(connfd);
-			// return -1;
-			continue;
-		}else if (rcount == FULL_MESSAGE_BUFFER){
-			fprintf(stderr, "Error, message limit reached (MAX: %i)\n", FULL_MESSAGE_BUFFER);
-			respond_500(connfd);
-			// return -1;
-			continue;
-		}else{
-			fprintf(stderr, "Message: %s\n", buf);
-		}
-		
-		/* Spilt the request into an array of each line */
-		char ** lines;
-		int size_Of_Array = 0;
-		size_Of_Array = split_HTTP_Request(connfd, buf, "\r\n", &lines);
-		if (size_Of_Array<0){
-			fprintf(stderr, "Error splitting HTTP Request\n");
-			// return -1;
-			continue;
-		}
-		
-		/* Check the hostname field of the request is valid */
-		error_Check = 0;
-		error_Check = check_Hostname(connfd, lines);
-		if(error_Check<0){
-			fprintf(stderr, "Error invalid hostname detected\n");
-			continue;
-		}
-		
-		/* Get the name of the resource requested */
-		char * filename;
-		error_Check = 0;
-		error_Check = check_Resource(connfd, *lines, &filename);
-		if(error_Check<0){
-			fprintf(stderr, "Error at get resource\n");
-			// return -1;
-			continue;
-		}
-		
-		/* Try to read in the resource requested */
-		char * resource_Requested;
-		long int size = 0;
-		size = read_In_Resource(connfd, filename, &resource_Requested);
-		if(size<0){
-			// An error has occurred
-			continue;
-		}
-		
-		/* Get the resource extension */
-		char * extension;
-		char * tokenptr;
-		for (	tokenptr = strtok(filename, ".");
-		     (tokenptr = strtok(NULL, ".")) != NULL;
-		     extension = tokenptr);
-		
-		/* Generate the HTTP response for resource */
-		error_Check = 0;
-		error_Check = respond_200(connfd, size, extension, resource_Requested);
-		// Check if response was good
-		if(error_Check<0){
-			fprintf(stderr, "Error replying\n");
-			// return -1;
-			continue;
+		ssize_t rcount = 1;
+		while(rcount){
+			// FULL_MESSAGE_BUFFER is the max size of message the server can receive
+			char buf[FULL_MESSAGE_BUFFER];
+			// Read the request into the buffer
+			rcount = read(connfd, buf, FULL_MESSAGE_BUFFER);
+			// Error checking
+			if (rcount == -1) {
+				// An error has occurred
+				fprintf(stderr, "Error reading from connection\n");
+				respond_500(connfd);
+				// return -1;
+				continue;
+			}else if (rcount == FULL_MESSAGE_BUFFER){
+				fprintf(stderr, "Error, message limit reached (MAX: %i)\n", FULL_MESSAGE_BUFFER);
+				respond_500(connfd);
+				// return -1;
+				continue;
+			}else if(!rcount){
+				fprintf(stderr, "Connection closed\n");
+				continue;
+			}
+			
+			/* Spilt the request into an array of each line */
+			char ** lines;
+			int size_Of_Array = 0;
+			size_Of_Array = split_HTTP_Request(connfd, buf, "\r\n", &lines);
+			if (size_Of_Array<0){
+				fprintf(stderr, "Error splitting HTTP Request\n");
+				// return -1;
+				continue;
+			}
+			
+			/* Check the hostname field of the request is valid */
+			error_Check = 0;
+			error_Check = check_Hostname(connfd, lines);
+			if(error_Check<0){
+				fprintf(stderr, "Error invalid hostname detected\n");
+				free(lines);
+				continue;
+			}
+			
+			/* Get the name of the resource requested */
+			char * filename;
+			error_Check = 0;
+			error_Check = check_Resource(connfd, *lines, &filename);
+			if(error_Check<0){
+				fprintf(stderr, "Error at get resource\n");
+				free(lines);
+				free(filename);
+				// return -1;
+				continue;
+			}
+			
+			/* Try to read in the resource requested */
+			char * resource_Requested;
+			long int size = 0;
+			size = read_In_Resource(connfd, filename, &resource_Requested);
+			if(size<0){
+				// An error has occurred
+				free(lines);
+				free(filename);
+				continue;
+			}
+			
+			/* Get the resource extension */
+			char * extension;
+			char * tokenptr;
+			for (	tokenptr = strtok(filename, ".");
+			     (tokenptr = strtok(NULL, ".")) != NULL;
+			     extension = tokenptr);
+			
+			/* Generate the HTTP response for resource */
+			error_Check = 0;
+			error_Check = respond_200(connfd, size, extension, resource_Requested);
+			
+			// Free allocated resources
+			free(lines);
+			free(filename);
+			free(resource_Requested);
+			// Check if response was good
+			if(error_Check<0){
+				fprintf(stderr, "Error replying\n");
+				// return -1;
+				continue;
+			}
 		}
 	}
 	close(fd);
@@ -260,6 +272,7 @@ int split_HTTP_Request(int fd, char * http_Request, char *delimiter, char ***  l
 		return -1;
 	}
 	
+	// While the delimiter hasn't appeared twice
 	while(strncmp(cursor, delimiter, length_Of_Delimiter) || 
 	      strncmp((cursor+length_Of_Delimiter), delimiter, length_Of_Delimiter) ){
 		if( !strncmp(cursor, delimiter, length_Of_Delimiter) ){
@@ -274,18 +287,12 @@ int split_HTTP_Request(int fd, char * http_Request, char *delimiter, char ***  l
 		}
 		cursor++;
 	}
-
-	// This was too presumptuous of good data always coming from a HTTP request (Looking at you Chrome)
-	// if(length_Of_Request-(cursor-http_Request) != (length_Of_Delimiter*2)){
-	// 	return -1;
-	// }
 	
 	num_Of_Lines++;
 	*lines = malloc(num_Of_Lines * sizeof(void *));
 	// Fail to malloc
 	if(*lines == NULL){
 		fprintf(stderr, "Error allocating space for lines array\n");
-		free(*lines);
 		respond_500(fd);
 		return -1;
 	}
@@ -321,7 +328,12 @@ int check_Hostname(int fd, char ** httpRequest){
 		
 		/* Convert line to lowercase */
 		// Make a copy of the current line to preserve the message from being altered
-		char * copy = malloc(strlen(*currentLine));
+		char * copy = malloc(strlen(*currentLine)+1);
+		if(copy == NULL){
+			free(copy);
+			fprintf(stderr, "Error copying: %s\n", *currentLine);
+			break;
+		}
 		strcpy ( copy, *currentLine );
 		char * p = copy;
 		
@@ -400,8 +412,11 @@ int check_Hostname(int fd, char ** httpRequest){
 		return 0;
 	}
 	
+	// Free hostname, no longer needed
+	free(hostname);
+	
 	/* Check if it is a localhost domain */
-	char * local = malloc(strlen("localhost") + strlen(sPort));
+	char * local = malloc(strlen("localhost") + strlen(sPort) + 1);
 	if(local==NULL){
 		fprintf(stderr, "Error allocating space for local\n");
 		free(sPort);
@@ -424,7 +439,6 @@ int check_Hostname(int fd, char ** httpRequest){
 	}
 	
 	fprintf(stderr, "Error %s does not match hostname given: %s\n", hostname, *currentLine+6);
-	free(hostname);
 	free(local);
 	free(sPort);
 	respond_400(fd);
@@ -499,6 +513,7 @@ long int read_In_Resource(int fd, char * filename, char ** variable_To_Fill_With
 	FILE *file;
 	int error_Check = 0;
 	long int size = 0;
+	struct stat fs;
 	
 	/* Attempt to open file */
 	file = fopen(filename, "rb");
@@ -509,22 +524,17 @@ long int read_In_Resource(int fd, char * filename, char ** variable_To_Fill_With
 	}
 	
 	/* Get the size of the file and allocate the space for it */
-	if(fseek(file, 0, SEEK_END)){
-	  fprintf(stderr, "Error seeking to end\n");
-	  fclose(file);
-	  respond_500(fd);
-	  return -1;
-	}
-	size = ftell(file);
-	if(size<0){
+	
+	if((stat(filename, &fs) == -1)){
 		fprintf(stderr, "Error getting size\n");
 		fclose(file);
 		respond_500(fd);
 		return -1;
 	}
-	rewind(file);
 	
-	*variable_To_Fill_With_Resource =  malloc(size * sizeof(char));
+	size = fs.st_size;
+	
+	*variable_To_Fill_With_Resource =  malloc(size * sizeof(char) + 1);
 	if(*variable_To_Fill_With_Resource == NULL){
 		fprintf(stderr, "Can't open requested file, too large\n");
 		fclose(file);
@@ -558,7 +568,7 @@ int respond_200(int fd, int size, char * extension, char * content){
 	/* Length of "Content length: " is 17
 	 Count is the num of digits in size
 	 "\r\n\r\n" is of size 4 */
-	char * content_Length = malloc((17 + count + 4) * sizeof(char));
+	char * content_Length = malloc((17 + count + 4) * sizeof(char) + 1);
 	// Malloc check
 	if(content_Length == NULL){
 		fprintf(stderr, "Error allocating space for Content-Length field of response\n");
@@ -597,7 +607,7 @@ int respond_200(int fd, int size, char * extension, char * content){
 	
 	// Allocate space to concatenate the full response together
 	response = malloc(strlen(HEADER) + strlen(content_Type) + 
-	                  strlen(content_Length) + size);
+	                  strlen(content_Length) + size + 1);
 
 	// Malloc check
 	if(response==NULL){
