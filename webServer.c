@@ -20,6 +20,11 @@
 #define BACKLOG 1500
 #endif
 
+// THREADS is the size of the thread pool to be created
+#ifndef THREADS
+#define THREADS 10
+#endif
+
 // INTERMEDIATE_BUFFER is the max size of read the server can receive.
 #ifndef INTERMEDIATE_BUFFER
 #define INTERMEDIATE_BUFFER 16*1024
@@ -51,7 +56,9 @@
 #define RESPONSE_500 "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\"><html>\r\n<head>\r\n<title> 500 Internal Server Error </title>\r\n</head>\r\n<body>\r\n<p> 500 Internal Server Error </p>\r\n</body>\r\n</html>\r\n"
 #endif
 
-// void sigproc(void);
+/* Used to override the processing of the interrupt signal,
+   thus allowing for a more gracefull shutdown of the web server */
+void sigproc();
 
 void *process_Connection(void * args);
 /* Splits the full string of the response into an array of strings, one entry for each line */
@@ -73,6 +80,10 @@ void respond_500(int fd);
 
 /* Need to:
 -Multithreading */
+
+// Interrupted is the only global flag. It helps with a graceful shut down of the web server
+int interrupted = 0;
+int threads_Running = 0;
 
 int main(){
 	
@@ -115,16 +126,59 @@ int main(){
 	}
 	printf("Server Running.\n");
 
+	/* Used to override the processing of the interrupt signal,
+       thus allowing for a more gracefull shutdown of the web server */
 	// signal(SIGINT, sigproc);
+	
+	/* Creates thread pool to deal with connections */
+	int error_Check = 0;
+	// THREADS is the size of the thread pool to be created
+	int num_Threads = THREADS;
+	// Array of threads being made
+	pthread_t threads[num_Threads];
+	int i;
+	
+	// Create all the threads
+	for(i=0; i<num_Threads; i++){
+		error_Check = pthread_create(&threads[i], NULL, (void *)process_Connection,  &fd);
+	}
+	
+	for(i=0; i<num_Threads; i++){
+		pthread_join(threads[i], NULL);
+	}
+	close(fd);
+	printf("Server shut down gracefully.\n");
+	return 0;
+}
 
-	while(1){
+/* Used to override the processing of the interrupt signal,
+   thus allowing for a more gracefull shutdown of the web server */
+void sigproc(){
+	// signal(SIGINT, sigproc);
+	//  NOTE some versions of UNIX will reset signal to default
+	// after each call. So for portability reset signal each time 
+	
+	printf(" Interrupt signal received. Shutting down web server.\n");	
+	interrupted = 1;
+	signal(SIGINT, SIG_DFL);
+}
+
+/* Creates a thread to deal with a connection */
+void *process_Connection(void * args){
+	
+	int fd = *(int *)(args);
+	threads_Running++;
+	printf("CREATION: Threads running: %i\n", threads_Running);
+	
+	// Interrupted is the only global flag. It helps with a graceful shut down of the web server
+	while(!interrupted){
 		int connfd;
-		int error_Check = 0;
 		
 		/* Accept a connection	*/
 		struct sockaddr_in6 cliaddr;	
 		socklen_t cliaddr_len = sizeof(cliaddr);
 		
+		// The thread will block here while there is nothing on the backlog, a.k.a work queue
 		connfd = accept(fd, (struct sockaddr *) &cliaddr, &cliaddr_len);
 		if (connfd == -1) {
 			// an error occurred
@@ -138,145 +192,123 @@ int main(){
 			continue;
 		}
 		
-		/* Create thread to deal with connection */
-		pthread_t thread_id;
-		void * args = &connfd;
-		printf("Before thread: %i\n", connfd);
-		error_Check = pthread_create(&thread_id, NULL, (void *)process_Connection,  &connfd);
-		
-	}
-	close(fd);
-	return 0;
-}
-
-// void sigproc(){
-// 	// signal(SIGINT, sigproc); /*  */
-// 	//  NOTE some versions of UNIX will reset signal to default
-// 	// after each call. So for portability reset signal each time 
-	
-// 	printf(" Interrupt sent\n");	
-// 	close(fd);
-// 	signal(SIGINT, SIG_DFL);
-// }
-
-void *process_Connection(void * args){
-	
-	int connfd = *(int *)(args);
-	printf("After thread: %i\n", connfd);
-	/* Create buffer to read in data from connection */
-	ssize_t rcount = 1;
-	while(rcount){
-		
-		int error_Check = 0;
-		// request_Size is the length of the request
-		int request_Size = INTERMEDIATE_BUFFER;
-		// message holds the full string of the request
-		char * message = malloc(request_Size * sizeof(char *));
-		
-		/* Read the request into the buffer until it ends with \r\n\r\n */
-		// The size of the message currently read in
-		int size_Read = 0;
-		while( size_Read<4 || strncmp((message + size_Read - 4), "\r\n\r\n", 4) ){
+		/* Create buffer to read in data from connection */
+		ssize_t rcount = 1;
+		while(rcount){
 			
-			// INTERMEDIATE_BUFFER is the max size of read the server can receive.
-			char buf[INTERMEDIATE_BUFFER];
+			int error_Check = 0;
+			// request_Size is the length of the request
+			int request_Size = INTERMEDIATE_BUFFER;
+			// message holds the full string of the request
+			char * message = malloc(request_Size * sizeof(char *));
 			
-			rcount = read(connfd, buf, INTERMEDIATE_BUFFER);
-			if(rcount == -1){
+			/* Read the request into the buffer until it ends with \r\n\r\n */
+			// The size of the message currently read in
+			int size_Read = 0;
+			while( size_Read<4 || strncmp((message + size_Read - 4), "\r\n\r\n", 4) ){
+				
+				// INTERMEDIATE_BUFFER is the max size of read the server can receive.
+				char buf[INTERMEDIATE_BUFFER];
+				
+				rcount = read(connfd, buf, INTERMEDIATE_BUFFER);
+				if(rcount == -1){
+					break;
+				}else if(!rcount){
+					break;
+				}else if(request_Size < size_Read+rcount){
+					request_Size *= 2;
+					message = (char *) realloc( (void*) message, request_Size * sizeof(char *) );
+				}
+				memcpy(message + size_Read, buf, rcount);
+				size_Read += rcount;
+			}
+			
+			// Error checking
+			if (rcount == -1) {
+				// An error has occurred
+				fprintf(stderr, "Error reading from connection\n");
+				respond_500(connfd);
+				free(message);
+				// return -1;
 				break;
 			}else if(!rcount){
+				fprintf(stderr, "Connection closed\n");
+				free(message);
 				break;
-			}else if(request_Size < size_Read+rcount){
-				request_Size *= 2;
-				message = (char *) realloc( (void*) message, request_Size * sizeof(char *) );
 			}
-			memcpy(message + size_Read, buf, rcount);
-			size_Read += rcount;
-		}
-		
-		// Error checking
-		if (rcount == -1) {
-			// An error has occurred
-			fprintf(stderr, "Error reading from connection\n");
-			respond_500(connfd);
-			free(message);
-			// return -1;
-			break;
-		}else if(!rcount){
-			fprintf(stderr, "Connection closed\n");
-			free(message);
-			break;
-		}
-		
-		/* Spilt the request into an array of each line */
-		char ** lines;
-		int size_Of_Array = 0;
-		size_Of_Array = split_HTTP_Request(connfd, message, "\r\n", &lines);
-		if (size_Of_Array<0){
-			fprintf(stderr, "Error splitting HTTP Request\n");
-			free(message);
-			// return -1;
-			continue;
-		}
-		
-		/* Check the hostname field of the request is valid */
-		error_Check = 0;
-		error_Check = check_Hostname(connfd, lines);
-		if(error_Check<0){
-			fprintf(stderr, "Error invalid hostname detected\n");
-			free(message);
-			free(lines);
-			continue;
-		}
-		
-		/* Get the name of the resource requested */
-		char * filename;
-		error_Check = 0;
-		error_Check = check_Resource(connfd, *lines, &filename);
-		if(error_Check<0){
-			fprintf(stderr, "Error at get resource\n");
-			free(message);
-			free(lines);
-			// return -1;
-			continue;
-		}
-		
-		/* Try to read in the resource requested */
-		char * resource_Requested;
-		long int size = 0;
-		size = read_In_Resource(connfd, filename, &resource_Requested);
-		if(size<0){
-			// An error has occurred
+			
+			/* Spilt the request into an array of each line */
+			char ** lines;
+			int size_Of_Array = 0;
+			size_Of_Array = split_HTTP_Request(connfd, message, "\r\n", &lines);
+			if (size_Of_Array<0){
+				fprintf(stderr, "Error splitting HTTP Request\n");
+				free(message);
+				// return -1;
+				continue;
+			}
+			
+			/* Check the hostname field of the request is valid */
+			error_Check = 0;
+			error_Check = check_Hostname(connfd, lines);
+			if(error_Check<0){
+				fprintf(stderr, "Error invalid hostname detected\n");
+				free(message);
+				free(lines);
+				continue;
+			}
+			
+			/* Get the name of the resource requested */
+			char * filename;
+			error_Check = 0;
+			error_Check = check_Resource(connfd, *lines, &filename);
+			if(error_Check<0){
+				fprintf(stderr, "Error at get resource\n");
+				free(message);
+				free(lines);
+				// return -1;
+				continue;
+			}
+			
+			/* Try to read in the resource requested */
+			char * resource_Requested;
+			long int size = 0;
+			size = read_In_Resource(connfd, filename, &resource_Requested);
+			if(size<0){
+				// An error has occurred
+				free(message);
+				free(lines);
+				free(filename);
+				continue;
+			}
+			
+			/* Get the resource extension */
+			char * extension;
+			char * tokenptr;
+			for (	tokenptr = strtok(filename, ".");
+			     (tokenptr = strtok(NULL, ".")) != NULL;
+			     extension = tokenptr);
+			
+			/* Generate the HTTP response for resource */
+			error_Check = 0;
+			error_Check = respond_200(connfd, size, extension, resource_Requested);
+			
+			// Free allocated resources
 			free(message);
 			free(lines);
 			free(filename);
-			continue;
+			free(resource_Requested);
+			// Check if response was good
+			if(error_Check<0){
+				fprintf(stderr, "Error replying\n");
+				// return -1;
+				continue;
+			}
 		}
-		
-		/* Get the resource extension */
-		char * extension;
-		char * tokenptr;
-		for (	tokenptr = strtok(filename, ".");
-		     (tokenptr = strtok(NULL, ".")) != NULL;
-		     extension = tokenptr);
-		
-		/* Generate the HTTP response for resource */
-		error_Check = 0;
-		error_Check = respond_200(connfd, size, extension, resource_Requested);
-		
-		// Free allocated resources
-		free(message);
-		free(lines);
-		free(filename);
-		free(resource_Requested);
-		// Check if response was good
-		if(error_Check<0){
-			fprintf(stderr, "Error replying\n");
-			// return -1;
-			continue;
-		}
+		close(connfd);
 	}
-	close(connfd);
+	threads_Running--;
+	printf("DESTRUCTION: Threads running: %i\n", threads_Running);
 	pthread_exit(NULL);
 }
 
