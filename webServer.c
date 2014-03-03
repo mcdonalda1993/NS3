@@ -99,7 +99,7 @@ void respond_500(int fd);
    Although this isn't a thread pool in the traditional sense, it is an implementation that made sense to me
    and doing it another way felt like it might fall under the category "Reinventing standard library functions" */
 
-/* There is a memory leak on line ~222 on the variable message which I believe is equal to:
+/* There is a memory leak on line ~234 on the variable message which I believe is equal to:
    number_Of_Connections_Open * INTERMEDIATE_BUFFER * sizeof(char *)
    I believe this only occurs when you interrupt the program midway through processing an open connection
    as it remains constant with regards to the above equation it seems. Couldn't figure out why it doesn't free though.*/
@@ -503,6 +503,52 @@ int check_Hostname(int fd, char ** httpRequest){
 	// Free hostname, no longer needed
 	free(hostname);
 	
+	/* Check if the host is equal the hostname plus "dcs.gla.ac.uk" top level domain */
+	// Allocates space for hostname plus "dcs.gla.ac.uk"
+	hostname = malloc(MAX_HOSTNAME+13+6);
+	if(hostname==NULL){
+		fprintf(stderr, "Error allocating space for hostname\n");
+		respond_500(fd);
+		return -1;
+	}
+	// Gets the hostname
+	error_Check = 0;
+	error_Check = gethostname(hostname, MAX_HOSTNAME);
+	if(error_Check<0){
+		fprintf(stderr, "Error getting hostname\n");
+		free(hostname);
+		respond_500(fd);
+		return -1;
+	}
+	
+	/* Convert hostname to all lowercase */
+	p = hostname;	
+	// Conversion to lower case.
+	// Taken from stack overflow: J.F. Sebastian
+	// https://stackoverflow.com/a/2661788
+	for ( ; *p; ++p) *p = tolower(*p);
+	
+	/* Compare the current hostname with the requested hostname plus "dcs.gla.ac.uk" */
+	// Append "dcs.gla.ac.uk"
+	strcat(hostname, "dcs.gla.ac.uk");
+	if(!strncmp(*currentLine+6, hostname, MAX_HOSTNAME)){
+		free(hostname);
+		free(sPort);
+		return 0;
+	}
+	
+	/* Check if the hostname has specified a non standard port */
+	// Add port number to the end of the hostname string
+	strcat(hostname, sPort);
+	if(!strncmp(*currentLine+6, hostname, MAX_HOSTNAME)){
+		free(hostname);
+		free(sPort);
+		return 0;
+	}
+	
+	// Free hostname, no longer needed
+	free(hostname);
+	
 	/* Check if it is a localhost domain */
 	char * local = malloc(strlen("localhost") + strlen(sPort) + 1);
 	if(local==NULL){
@@ -565,8 +611,8 @@ int check_Resource(int fd, char * httpRequest, char ** addr){
 	free(protocol);
 	// If num is less than 3, an error has occurred
 	if(num!=3){
-		fprintf(stderr, "Error scanning request. Either one field of first line of request is 
-		        missing or resource name could be too large (MAX: %i)\n", RESOURCE_NAME_BUFFER);
+		fprintf(stderr, "Error scanning request. Either one field of first line of request is"
+		        "missing or resource name could be too large (MAX: %i)\n", RESOURCE_NAME_BUFFER);
 		free(request);
 		free(resource);
 		respond_400(fd);
