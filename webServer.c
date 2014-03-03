@@ -530,7 +530,7 @@ int check_Hostname(int fd, char ** httpRequest){
 	
 	/* Compare the current hostname with the requested hostname plus "dcs.gla.ac.uk" */
 	// Append "dcs.gla.ac.uk"
-	strcat(hostname, "dcs.gla.ac.uk");
+	strcat(hostname, ".dcs.gla.ac.uk");
 	if(!strncmp(*currentLine+6, hostname, MAX_HOSTNAME)){
 		free(hostname);
 		free(sPort);
