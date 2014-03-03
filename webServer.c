@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <sys/stat.h>
+#include <pthread.h>
 
 #ifndef PORT
 #define PORT 8008
@@ -51,6 +52,8 @@
 #endif
 
 // void sigproc(void);
+
+void *process_Connection(void * args);
 /* Splits the full string of the response into an array of strings, one entry for each line */
 int split_HTTP_Request(int fd, char * httpRequest, char *delimiter, char *** lines);
 /* Looks for a hostname, then checks if it matches current hostname */
@@ -114,10 +117,8 @@ int main(){
 
 	// signal(SIGINT, sigproc);
 
-	int connfd;
-	
 	while(1){
-		
+		int connfd;
 		int error_Check = 0;
 		
 		/* Accept a connection	*/
@@ -137,117 +138,12 @@ int main(){
 			continue;
 		}
 		
-		/* Create buffer to read in data from connection */
-		ssize_t rcount = 1;
-		while(rcount){
-			
-			//
-			int request_Size = INTERMEDIATE_BUFFER;
-			char * message = malloc(request_Size * sizeof(char *));
-			
-			/* Read the request into the buffer until it ends with \r\n\r\n */
-			// The size of the message currently read in
-			int size_Read = 0;
-			while( size_Read<4 || strncmp((message + size_Read - 4), "\r\n\r\n", 4) ){
-				
-				// INTERMEDIATE_BUFFER is the max size of read the server can receive.
-				char buf[INTERMEDIATE_BUFFER];
-				
-				rcount = read(connfd, buf, INTERMEDIATE_BUFFER);
-				if(rcount == -1){
-					break;
-				}else if(!rcount){
-					break;
-				}else if(request_Size < size_Read+rcount){
-					request_Size *= 2;
-					message = (char *) realloc( (void*) message, request_Size * sizeof(char *) );
-				}
-				memcpy(message + size_Read, buf, rcount);
-				size_Read += rcount;
-			}
-			
-			// Error checking
-			if (rcount == -1) {
-				// An error has occurred
-				fprintf(stderr, "Error reading from connection\n");
-				respond_500(connfd);
-				free(message);
-				// return -1;
-				break;
-			}else if(!rcount){
-				fprintf(stderr, "Connection closed\n");
-				free(message);
-				break;
-			}
-			
-			/* Spilt the request into an array of each line */
-			char ** lines;
-			int size_Of_Array = 0;
-			size_Of_Array = split_HTTP_Request(connfd, message, "\r\n", &lines);
-			if (size_Of_Array<0){
-				fprintf(stderr, "Error splitting HTTP Request\n");
-				free(message);
-				// return -1;
-				continue;
-			}
-			
-			/* Check the hostname field of the request is valid */
-			error_Check = 0;
-			error_Check = check_Hostname(connfd, lines);
-			if(error_Check<0){
-				fprintf(stderr, "Error invalid hostname detected\n");
-				free(message);
-				free(lines);
-				continue;
-			}
-			
-			/* Get the name of the resource requested */
-			char * filename;
-			error_Check = 0;
-			error_Check = check_Resource(connfd, *lines, &filename);
-			if(error_Check<0){
-				fprintf(stderr, "Error at get resource\n");
-				free(message);
-				free(lines);
-				// return -1;
-				continue;
-			}
-			
-			/* Try to read in the resource requested */
-			char * resource_Requested;
-			long int size = 0;
-			size = read_In_Resource(connfd, filename, &resource_Requested);
-			if(size<0){
-				// An error has occurred
-				free(message);
-				free(lines);
-				free(filename);
-				continue;
-			}
-			
-			/* Get the resource extension */
-			char * extension;
-			char * tokenptr;
-			for (	tokenptr = strtok(filename, ".");
-			     (tokenptr = strtok(NULL, ".")) != NULL;
-			     extension = tokenptr);
-			
-			/* Generate the HTTP response for resource */
-			error_Check = 0;
-			error_Check = respond_200(connfd, size, extension, resource_Requested);
-			
-			// Free allocated resources
-			free(message);
-			free(lines);
-			free(filename);
-			free(resource_Requested);
-			// Check if response was good
-			if(error_Check<0){
-				fprintf(stderr, "Error replying\n");
-				// return -1;
-				continue;
-			}
-		}
+		/* Create thread to deal with connection */
+		pthread_t thread_id;
+		void * args = &connfd;
+		printf("Before thread: %i\n", connfd);
+		error_Check = pthread_create(&thread_id, NULL, (void *)process_Connection,  &connfd);
+		
 	}
 	close(fd);
 	return 0;
@@ -262,6 +158,127 @@ int main(){
 // 	close(fd);
 // 	signal(SIGINT, SIG_DFL);
 // }
+
+void *process_Connection(void * args){
+	
+	int connfd = *(int *)(args);
+	printf("After thread: %i\n", connfd);
+	/* Create buffer to read in data from connection */
+	ssize_t rcount = 1;
+	while(rcount){
+		
+		int error_Check = 0;
+		// request_Size is the length of the request
+		int request_Size = INTERMEDIATE_BUFFER;
+		// message holds the full string of the request
+		char * message = malloc(request_Size * sizeof(char *));
+		
+		/* Read the request into the buffer until it ends with \r\n\r\n */
+		// The size of the message currently read in
+		int size_Read = 0;
+		while( size_Read<4 || strncmp((message + size_Read - 4), "\r\n\r\n", 4) ){
+			
+			// INTERMEDIATE_BUFFER is the max size of read the server can receive.
+			char buf[INTERMEDIATE_BUFFER];
+			
+			rcount = read(connfd, buf, INTERMEDIATE_BUFFER);
+			if(rcount == -1){
+				break;
+			}else if(!rcount){
+				break;
+			}else if(request_Size < size_Read+rcount){
+				request_Size *= 2;
+				message = (char *) realloc( (void*) message, request_Size * sizeof(char *) );
+			}
+			memcpy(message + size_Read, buf, rcount);
+			size_Read += rcount;
+		}
+		
+		// Error checking
+		if (rcount == -1) {
+			// An error has occurred
+			fprintf(stderr, "Error reading from connection\n");
+			respond_500(connfd);
+			free(message);
+			// return -1;
+			break;
+		}else if(!rcount){
+			fprintf(stderr, "Connection closed\n");
+			free(message);
+			break;
+		}
+		
+		/* Spilt the request into an array of each line */
+		char ** lines;
+		int size_Of_Array = 0;
+		size_Of_Array = split_HTTP_Request(connfd, message, "\r\n", &lines);
+		if (size_Of_Array<0){
+			fprintf(stderr, "Error splitting HTTP Request\n");
+			free(message);
+			// return -1;
+			continue;
+		}
+		
+		/* Check the hostname field of the request is valid */
+		error_Check = 0;
+		error_Check = check_Hostname(connfd, lines);
+		if(error_Check<0){
+			fprintf(stderr, "Error invalid hostname detected\n");
+			free(message);
+			free(lines);
+			continue;
+		}
+		
+		/* Get the name of the resource requested */
+		char * filename;
+		error_Check = 0;
+		error_Check = check_Resource(connfd, *lines, &filename);
+		if(error_Check<0){
+			fprintf(stderr, "Error at get resource\n");
+			free(message);
+			free(lines);
+			// return -1;
+			continue;
+		}
+		
+		/* Try to read in the resource requested */
+		char * resource_Requested;
+		long int size = 0;
+		size = read_In_Resource(connfd, filename, &resource_Requested);
+		if(size<0){
+			// An error has occurred
+			free(message);
+			free(lines);
+			free(filename);
+			continue;
+		}
+		
+		/* Get the resource extension */
+		char * extension;
+		char * tokenptr;
+		for (	tokenptr = strtok(filename, ".");
+		     (tokenptr = strtok(NULL, ".")) != NULL;
+		     extension = tokenptr);
+		
+		/* Generate the HTTP response for resource */
+		error_Check = 0;
+		error_Check = respond_200(connfd, size, extension, resource_Requested);
+		
+		// Free allocated resources
+		free(message);
+		free(lines);
+		free(filename);
+		free(resource_Requested);
+		// Check if response was good
+		if(error_Check<0){
+			fprintf(stderr, "Error replying\n");
+			// return -1;
+			continue;
+		}
+	}
+	close(connfd);
+	pthread_exit(NULL);
+}
 
 /* This function will split a request into based on the assumption the terminator symbol is the delimiter twice.*/
 int split_HTTP_Request(int fd, char * http_Request, char *delimiter, char ***  lines){

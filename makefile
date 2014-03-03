@@ -1,12 +1,12 @@
-CFLAGS=-W -Wall -g -ggdb
+CFLAGS=-W -Wall -g -ggdb -lpthread
 
 all: webServer clean
 
 webServer: webServer.o
-	gcc -o webServer webServer.o $(CFLAGS)
+	gcc $(CFLAGS) -o webServer webServer.o
 
 webServer.o: webServer.c
-	gcc -c webServer.c $(CFLAGS)
+	gcc $(CFLAGS) -c webServer.c
 	
 clean:
 	rm -rf *.o 
