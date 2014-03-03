@@ -91,14 +91,23 @@ void respond_500(int fd);
    it is not (ie. there are connections to process).
    
    Thus it is my undestanding that I have technically implemented the thread pool design pattern by reusing the
-   structures and methods given by the connection/operating system. */
+   structures and methods given by the connection/operating system. The reason why this approach is do-able 
+   is due to the fact that the accept function is thread safe, at least according to:
+   http://stackoverflow.com/q/5124320 and
+   http://stackoverflow.com/q/2354417
+   
+   Although this isn't a thread pool in the traditional sense, it is an implementation that made sense to me
+   and doing it another way felt like it might fall under the category "Reinventing standard library functions" */
 
 /* There is a memory leak on line ~222 on the variable message which I believe is equal to:
    number_Of_Connections_Open * INTERMEDIATE_BUFFER * sizeof(char *)
    I believe this only occurs when you interrupt the program midway through processing an open connection
-   as it remains constant with regards to the above equation. Couldn't figure out why it doesn't free though.*/
+   as it remains constant with regards to the above equation it seems. Couldn't figure out why it doesn't free though.*/
+  
+/* These sort of comments indicate what the next block of code will do */
+// These sort of comments indicate what the next line or so will do 
 
-// Threads is the only global variable and it helps with a graceful shut down of the web server.
+// Threads is the only global variable and it helps with a "graceful" shut down of the web server.
 // Array of threads being made
 pthread_t threads[THREADS];
 
@@ -158,13 +167,16 @@ int main(){
 	// Create all the threads
 	for(i=0; i<num_Threads; i++){
 		error_Check = pthread_create(&threads[i], NULL, (void *)process_Connection,  &fd);
+		if(error_Check<0){
+			fprintf(stderr, "Failed to create %ith thread\n", i);
+		}
 	}
 	
 	for(i=0; i<num_Threads; i++){
 		pthread_join(threads[i], NULL);
 	}
 	close(fd);
-	printf("Server shut down gracefully.\n");
+	printf("Server shut down \"gracefully\".\n");
 	return 0;
 }
 
@@ -304,8 +316,9 @@ void *process_Connection(void * args){
 			/* Get the resource extension */
 			char * extension;
 			char * tokenptr;
-			for (	tokenptr = strtok(filename, ".");
-			     (tokenptr = strtok(NULL, ".")) != NULL;
+			char * saveptr;
+			for (	tokenptr = strtok_r(filename, ".", &saveptr);
+			     (tokenptr = strtok_r(NULL, ".", &saveptr)) != NULL;
 			     extension = tokenptr);
 			
 			/* Generate the HTTP response for resource */
@@ -370,7 +383,8 @@ int split_HTTP_Request(int fd, char * http_Request, char *delimiter, char ***  l
 		return -1;
 	}
 	
-	cursor = strtok(http_Request, delimiter);
+	char * saveptr;
+	cursor = strtok_r(http_Request, delimiter, &saveptr);
 	// If no delimiter found then error
 	if (cursor == NULL){
 		fprintf(stderr, "No delimiter found in HTTP request\n");
@@ -382,8 +396,9 @@ int split_HTTP_Request(int fd, char * http_Request, char *delimiter, char ***  l
 	/* Keep splitting the line up and filling the array */
 	**lines = cursor;
 	int i;
+	saveptr = NULL;
 	for(i=1; i<num_Of_Lines && cursor != NULL; i++){
-		cursor = strtok(NULL, delimiter);
+		cursor = strtok_r(NULL, delimiter, &saveptr);
 		*(*lines+i) = cursor;
 	}
 	
@@ -550,7 +565,8 @@ int check_Resource(int fd, char * httpRequest, char ** addr){
 	free(protocol);
 	// If num is less than 3, an error has occurred
 	if(num!=3){
-		fprintf(stderr, "Error scanning request. Either one field of first line missing or resource name could be too large (MAX: %i)\n", RESOURCE_NAME_BUFFER);
+		fprintf(stderr, "Error scanning request. Either one field of first line of request is 
+		        missing or resource name could be too large (MAX: %i)\n", RESOURCE_NAME_BUFFER);
 		free(request);
 		free(resource);
 		respond_400(fd);
