@@ -27,7 +27,7 @@
 
 // INTERMEDIATE_BUFFER is the max size of read the server can receive.
 #ifndef INTERMEDIATE_BUFFER
-#define INTERMEDIATE_BUFFER 16*1024
+#define INTERMEDIATE_BUFFER 6*1024
 #endif
 
 // MAX_HOSTNAME is the max size the hostname can be
@@ -60,6 +60,7 @@
    thus allowing for a more gracefull shutdown of the web server */
 void sigproc();
 
+/* Used to create a thread to process a connection */
 void *process_Connection(void * args);
 /* Splits the full string of the response into an array of strings, one entry for each line */
 int split_HTTP_Request(int fd, char * httpRequest, char *delimiter, char *** lines);
@@ -78,14 +79,31 @@ void respond_404(int fd);
 /* Responds to the connection with a 500 Internal Server Error message */
 void respond_500(int fd);
 
-/* Need to:
--Multithreading */
+/* STATE OF PROGRAM */
 
-// Interrupted is the only global flag. It helps with a graceful shut down of the web server
-int interrupted = 0;
-int threads_Running = 0;
+/* My implementation of the thread pool works as follows:
+   
+   The backlog acts as my work queue.
+   The main loop creates {THREADS} number of threads to act as a thread pool.
+   These threads then all start running but then block on accept.
+   When a connection comes in, one of the threads accepts the connection while the others continue to block
+   Thus the threads will block while the work queue is empty (ie. no new connections) and do work whilst 
+   it is not (ie. there are connections to process).
+   
+   Thus it is my undestanding that I have technically implemented the thread pool design pattern by reusing the
+   structures and methods given by the connection/operating system. */
+
+/* There is a memory leak on line ~222 on the variable message which I believe is equal to:
+   number_Of_Connections_Open * INTERMEDIATE_BUFFER * sizeof(char *)
+   I believe this only occurs when you interrupt the program midway through processing an open connection
+   as it remains constant with regards to the above equation. Couldn't figure out why it doesn't free though.*/
+
+// Threads is the only global variable and it helps with a graceful shut down of the web server.
+// Array of threads being made
+pthread_t threads[THREADS];
 
 int main(){
+	
 	
 	/* Create the socket */
 	int fd;
@@ -128,16 +146,15 @@ int main(){
 
 	/* Used to override the processing of the interrupt signal,
        thus allowing for a more gracefull shutdown of the web server */
-	// signal(SIGINT, sigproc);
+	signal(SIGINT, sigproc);
 	
 	/* Creates thread pool to deal with connections */
 	int error_Check = 0;
 	// THREADS is the size of the thread pool to be created
 	int num_Threads = THREADS;
-	// Array of threads being made
-	pthread_t threads[num_Threads];
 	int i;
 	
+	// the threads variable is an array of threads being made
 	// Create all the threads
 	for(i=0; i<num_Threads; i++){
 		error_Check = pthread_create(&threads[i], NULL, (void *)process_Connection,  &fd);
@@ -158,20 +175,21 @@ void sigproc(){
 	//  NOTE some versions of UNIX will reset signal to default
 	// after each call. So for portability reset signal each time 
 	
-	printf(" Interrupt signal received. Shutting down web server.\n");	
-	interrupted = 1;
+	printf("\nInterrupt signal received. Shutting down web server.\n");	
+	int i;
+	for(i=0; i<THREADS; i++){
+		pthread_cancel(threads[i]);
+	}
 	signal(SIGINT, SIG_DFL);
 }
 
-/* Creates a thread to deal with a connection */
+/* Used to create a thread to process a connection */
 void *process_Connection(void * args){
 	
 	int fd = *(int *)(args);
-	threads_Running++;
-	printf("CREATION: Threads running: %i\n", threads_Running);
 	
-	// Interrupted is the only global flag. It helps with a graceful shut down of the web server
-	while(!interrupted){
+	
+	while(1){
 		int connfd;
 		
 		/* Accept a connection	*/
@@ -194,6 +212,7 @@ void *process_Connection(void * args){
 		
 		/* Create buffer to read in data from connection */
 		ssize_t rcount = 1;
+		
 		while(rcount){
 			
 			int error_Check = 0;
@@ -307,8 +326,7 @@ void *process_Connection(void * args){
 		}
 		close(connfd);
 	}
-	threads_Running--;
-	printf("DESTRUCTION: Threads running: %i\n", threads_Running);
+	
 	pthread_exit(NULL);
 }
 
@@ -735,4 +753,3 @@ void respond_500(int fd){
 	close(fd);
 	return;
 }
-
