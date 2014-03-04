@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <pthread.h>
 
+// The port the server should bind to
 #ifndef PORT
 #define PORT 8008
 #endif
@@ -18,6 +19,11 @@
 // each waiting to be accept()’ed
 #ifndef BACKLOG
 #define BACKLOG 1500
+#endif
+
+// DOMAIN is the top level domain that the server is running on
+#ifndef DOMAIN
+#define DOMAIN ".dcs.gla.ac.uk"
 #endif
 
 // THREADS is the size of the thread pool to be created
@@ -99,11 +105,14 @@ void respond_500(int fd);
    Although this isn't a thread pool in the traditional sense, it is an implementation that made sense to me
    and doing it another way felt like it might fall under the category "Reinventing standard library functions" */
 
-/* There is a memory leak on line ~234 on the variable message which I believe is equal to:
-   number_Of_Connections_Open * INTERMEDIATE_BUFFER * sizeof(char *)
+/* There is a memory leak on line ~243 on the variable message which I believe is equal to:
+   number_Of_Connections_Open * INTERMEDIATE_BUFFER
    I believe this only occurs when you interrupt the program midway through processing an open connection
-   as it remains constant with regards to the above equation it seems. Couldn't figure out why it doesn't free though.*/
-  
+   as it remains constant with regards to the above equation it seems. Couldn't figure out a way to free it though.*/
+
+/* END STATE OF PROGRAM */
+   
+// The reason fo so many comments is because I want to use this as a reference later and so wanted every line to be clear.
 /* These sort of comments indicate what the next block of code will do */
 // These sort of comments indicate what the next line or so will do 
 
@@ -137,6 +146,7 @@ int main(){
 	addr.sin6_addr = in6addr_any;
 	// The type of connect, either IPv4/IPv6
 	addr.sin6_family = type;
+	// The port the server should bind to
 	addr.sin6_port = htons(PORT);
 	if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
 		// an error occurred
@@ -183,7 +193,7 @@ int main(){
 /* Used to override the processing of the interrupt signal,
    thus allowing for a more gracefull shutdown of the web server */
 void sigproc(){
-	// signal(SIGINT, sigproc);
+	
 	//  NOTE some versions of UNIX will reset signal to default
 	// after each call. So for portability reset signal each time 
 	
@@ -199,7 +209,6 @@ void sigproc(){
 void *process_Connection(void * args){
 	
 	int fd = *(int *)(args);
-	
 	
 	while(1){
 		int connfd;
@@ -231,7 +240,7 @@ void *process_Connection(void * args){
 			// request_Size is the length of the request
 			int request_Size = INTERMEDIATE_BUFFER;
 			// message holds the full string of the request
-			char * message = malloc(request_Size * sizeof(char *));
+			char * message = malloc(request_Size);
 			
 			/* Read the request into the buffer until it ends with \r\n\r\n */
 			// The size of the message currently read in
@@ -248,7 +257,7 @@ void *process_Connection(void * args){
 					break;
 				}else if(request_Size < size_Read+rcount){
 					request_Size *= 2;
-					message = (char *) realloc( (void*) message, request_Size * sizeof(char *) );
+					message = (char *) realloc( (void*) message, request_Size + 1);
 				}
 				memcpy(message + size_Read, buf, rcount);
 				size_Read += rcount;
@@ -503,9 +512,10 @@ int check_Hostname(int fd, char ** httpRequest){
 	// Free hostname, no longer needed
 	free(hostname);
 	
-	/* Check if the host is equal the hostname plus "dcs.gla.ac.uk" top level domain */
-	// Allocates space for hostname plus "dcs.gla.ac.uk"
-	hostname = malloc(MAX_HOSTNAME+13+6);
+	/* Check if the host is equal the hostname plus top level domain */
+	// Allocates space for hostname plus top level domain
+	// DOMAIN is the top level domain that the server is running on
+	hostname = malloc(MAX_HOSTNAME+strlen(DOMAIN)+1+6);
 	if(hostname==NULL){
 		fprintf(stderr, "Error allocating space for hostname\n");
 		respond_500(fd);
@@ -530,7 +540,7 @@ int check_Hostname(int fd, char ** httpRequest){
 	
 	/* Compare the current hostname with the requested hostname plus "dcs.gla.ac.uk" */
 	// Append "dcs.gla.ac.uk"
-	strcat(hostname, ".dcs.gla.ac.uk");
+	strcat(hostname, DOMAIN);
 	if(!strncmp(*currentLine+6, hostname, MAX_HOSTNAME)){
 		free(hostname);
 		free(sPort);
@@ -669,7 +679,7 @@ long int read_In_Resource(int fd, char * filename, char ** variable_To_Fill_With
 	
 	size = fs.st_size;
 	
-	*variable_To_Fill_With_Resource =  malloc(size * sizeof(char) + 1);
+	*variable_To_Fill_With_Resource =  malloc(size + 1);
 	if(*variable_To_Fill_With_Resource == NULL){
 		fprintf(stderr, "Can't open requested file, too large\n");
 		fclose(file);
@@ -703,7 +713,7 @@ int respond_200(int fd, int size, char * extension, char * content){
 	/* Length of "Content length: " is 17
 	 Count is the num of digits in size
 	 "\r\n\r\n" is of size 4 */
-	char * content_Length = malloc((17 + count + 4) * sizeof(char) + 1);
+	char * content_Length = malloc((17 + count + 4) + 1);
 	// Malloc check
 	if(content_Length == NULL){
 		fprintf(stderr, "Error allocating space for Content-Length field of response\n");
