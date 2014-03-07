@@ -12,7 +12,7 @@
 
 // The port the server should bind to
 #ifndef PORT
-#define PORT 8008
+#define PORT 8080
 #endif
 
 // BACKLOG is the maximum number of connections the socket will queue up, 
@@ -93,7 +93,7 @@ void respond_500(int fd);
    The main loop creates {THREADS} number of threads to act as a thread pool.
    These threads then all start running but then block on accept.
    When a connection comes in, one of the threads accepts the connection while the others continue to block
-   Thus the threads will block while the work queue is empty (ie. no new connections) and do work whilst 
+   Thus the threads will block while the work queue (backlog) is empty (ie. no new connections) and do work whilst 
    it is not (ie. there are connections to process).
    
    Thus it is my undestanding that I have technically implemented the thread pool design pattern by reusing the
@@ -110,11 +110,11 @@ void respond_500(int fd);
    I believe this only occurs when you interrupt the program midway through processing an open connection
    as it remains constant with regards to the above equation it seems. Couldn't figure out a way to free it though.*/
 
-/* END STATE OF PROGRAM */
-   
-// The reason fo so many comments is because I want to use this as a reference later and so wanted every line to be clear.
+// The reason for so many comments is because I want to use this as a reference later and so wanted every line to be clear.
 /* These sort of comments indicate what the next block of code will do */
 // These sort of comments indicate what the next line or so will do 
+
+/* END STATE OF PROGRAM */
 
 // Threads is the only global variable and it helps with a "graceful" shut down of the web server.
 // Array of threads being made

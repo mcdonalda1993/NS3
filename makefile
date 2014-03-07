@@ -1,6 +1,6 @@
 CFLAGS=-W -Wall -g -ggdb -lpthread
 
-all: webServer clean
+all: webServer
 
 webServer: webServer.o
 	gcc $(CFLAGS) -o webServer webServer.o
